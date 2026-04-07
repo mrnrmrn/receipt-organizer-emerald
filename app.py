@@ -179,7 +179,7 @@ def main() -> None:
             st.image(u["bytes"], caption=u["name"], use_container_width=True)
 
     st.subheader("추출")
-    process_clicked = st.button("PDF 만들기", type="primary")
+    process_clicked = st.button("추출하기", type="primary")
     if process_clicked:
         st.session_state.last_error = None
         successful_receipts: list[Any] = []
@@ -247,7 +247,7 @@ def main() -> None:
                 st.text(text if isinstance(text, str) else str(text))
 
     if not st.session_state.parsed_receipts:
-        st.info("**PDF 만들기**를 눌러 영수증별 PDF를 생성하세요.")
+        st.info("**추출하기**를 눌러 영수증별 PDF를 생성하세요.")
         st.stop()
 
     st.subheader("과제명 입력")
