@@ -9,8 +9,12 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XLImage
+from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
+from openpyxl.drawing.xdr import XDRPositiveSize2D
 from openpyxl.styles.colors import Color
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
+from openpyxl.utils.units import pixels_to_EMU, points_to_pixels
 from openpyxl.worksheet.worksheet import Worksheet
 
 from receipt_app.config import AppConfig, DEFAULT_CONFIG, GUIDE_NOTICE_TEXT
@@ -566,13 +570,20 @@ def _embed_receipt_images(
         receipts[: config.max_receipt_images], config.image_anchor_cells
     ):
         image = open_image_from_bytes(receipt.image_bytes)
+        slot_width_px, slot_height_px = _get_slot_pixel_size(sheet, anchor, config)
         resized = resize_for_excel(
             image,
-            max_width=config.image_max_width_px,
-            max_height=config.image_max_height_px,
+            max_width=slot_width_px,
+            max_height=slot_height_px,
         )
         excel_image = XLImage(BytesIO(image_to_png_bytes(resized)))
-        excel_image.anchor = anchor
+        excel_image.anchor = _build_centered_image_anchor(
+            anchor_cell=anchor,
+            image_width_px=excel_image.width,
+            image_height_px=excel_image.height,
+            slot_width_px=slot_width_px,
+            slot_height_px=slot_height_px,
+        )
         sheet.add_image(excel_image)
 
 
@@ -591,6 +602,69 @@ def _get_image_anchor_cell(image: Any) -> str | None:
         return None
 
     return f"{chr(ord('A') + column)}{row + 1}"
+
+
+def _get_slot_pixel_size(
+    sheet: Worksheet, anchor_cell: str, config: AppConfig
+) -> tuple[int, int]:
+    row_number, column_number = coordinate_to_tuple(anchor_cell)
+    column_letter = get_column_letter(column_number)
+    slot_end_row = _get_slot_end_row(sheet, row_number, config)
+
+    column_width = sheet.column_dimensions[column_letter].width
+    width_px = _column_width_to_pixels(column_width)
+
+    default_row_height = sheet.sheet_format.defaultRowHeight or 15
+    height_px = 0
+    for current_row in range(row_number, slot_end_row + 1):
+        row_height = sheet.row_dimensions[current_row].height or default_row_height
+        height_px += points_to_pixels(row_height)
+
+    return max(1, width_px), max(1, int(height_px))
+
+
+def _get_slot_end_row(sheet: Worksheet, start_row: int, config: AppConfig) -> int:
+    current_header_row = start_row - 1
+    try:
+        header_index = config.image_numbering_rows.index(current_header_row)
+    except ValueError:
+        return sheet.max_row
+
+    if header_index + 1 >= len(config.image_numbering_rows):
+        return sheet.max_row
+    return config.image_numbering_rows[header_index + 1] - 1
+
+
+def _column_width_to_pixels(width: float | None) -> int:
+    effective_width = 8.43 if width is None else width
+    if effective_width <= 0:
+        return 0
+    return int(((256 * effective_width + int(128 / 7)) / 256) * 7)
+
+
+def _build_centered_image_anchor(
+    anchor_cell: str,
+    image_width_px: int,
+    image_height_px: int,
+    slot_width_px: int,
+    slot_height_px: int,
+) -> OneCellAnchor:
+    row_number, column_number = coordinate_to_tuple(anchor_cell)
+    x_offset_px = max(0, int((slot_width_px - image_width_px) / 2))
+    y_offset_px = max(0, int((slot_height_px - image_height_px) / 2))
+
+    return OneCellAnchor(
+        _from=AnchorMarker(
+            col=column_number - 1,
+            colOff=pixels_to_EMU(x_offset_px),
+            row=row_number - 1,
+            rowOff=pixels_to_EMU(y_offset_px),
+        ),
+        ext=XDRPositiveSize2D(
+            cx=pixels_to_EMU(image_width_px),
+            cy=pixels_to_EMU(image_height_px),
+        ),
+    )
 
 
 def _coerce_report_month(report_month_text: date | str) -> date | str:
