@@ -29,6 +29,8 @@ class GuideRow:
 
 @dataclass(frozen=True)
 class AppConfig:
+    ocr_backend: str = "gemini"
+    gemini_model: str = "gemini-2.5-flash"
     sheet_name: str = "항목"
     guide_sheet_name: str = "비목 안내"
     operator_name_cell: str = "C2"

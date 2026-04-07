@@ -2,3 +2,4 @@ streamlit
 pillow
 openpyxl
 pytesseract
+google-genai

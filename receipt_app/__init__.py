@@ -1,7 +1,7 @@
 from receipt_app.config import AppConfig, DEFAULT_CONFIG
 from receipt_app.export.excel_export import export_receipts_to_workbook
 from receipt_app.models import ExportRow, OCRResult, ParsedReceipt, UploadedReceipt
-from receipt_app.ocr import DEFAULT_OCR_BACKEND, OCRBackend, TesseractOCRBackend
+from receipt_app.ocr import DEFAULT_OCR_BACKEND, OCRBackend
 from receipt_app.parse.receipt_parser import ReceiptParser, parse_receipt_text
 
 __all__ = [
@@ -13,7 +13,6 @@ __all__ = [
     "OCRResult",
     "ParsedReceipt",
     "ReceiptParser",
-    "TesseractOCRBackend",
     "UploadedReceipt",
     "export_receipts_to_workbook",
     "parse_receipt_text",
