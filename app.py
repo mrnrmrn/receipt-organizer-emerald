@@ -20,12 +20,15 @@ try:
     from receipt_app.parse.receipt_parser import parse_receipt_text
 except Exception as e:
     st.error(
-        "Backend package import failed.\n\n"
-        "Expected: receipt_app.config, receipt_app.models, receipt_app.ocr, "
+        "백엔드 패키지를 불러오지 못했습니다.\n\n"
+        "필요 모듈: receipt_app.config, receipt_app.models, receipt_app.ocr, "
         "receipt_app.parse.receipt_parser, receipt_app.export.excel_export\n\n"
-        f"Import error: {type(e).__name__}: {e}"
+        f"에러: {type(e).__name__}: {e}"
     )
     st.stop()
+
+
+APP_TITLE_KO = "TBU 업무지원금 신청"
 
 
 def _sha256(data: bytes) -> str:
@@ -187,68 +190,73 @@ def _ocr_init_hint(err: Exception) -> str | None:
     msg = f"{type(err).__name__}: {err}".lower()
     if "gemini" in msg or "google" in msg or "api key" in msg:
         return (
-            "Gemini API key may be missing or invalid.\n\n"
-            "Add to your Streamlit secrets file (`.streamlit/secrets.toml`):\n"
+            "Gemini API 키가 없거나 올바르지 않을 수 있습니다.\n\n"
+            "Streamlit secrets(`.streamlit/secrets.toml`)에 추가하세요:\n"
             "```\n"
             'GEMINI_API_KEY = "your-key-here"\n'
             'GEMINI_MODEL = "gemini-2.5-flash"\n'
             "```\n"
-            "Or set `GEMINI_API_KEY` and `GEMINI_MODEL` in the server environment.\n"
-            "Get a key from: https://aistudio.google.com/app/apikey\n"
+            "또는 서버 환경변수 `GEMINI_API_KEY`, `GEMINI_MODEL`을 설정하세요.\n"
+            "키 발급: https://aistudio.google.com/app/apikey\n"
         )
     return None
 
 
 def main() -> None:
     st.set_page_config(
-        page_title=getattr(config, "APP_TITLE", "Receipt organizer"), layout="wide"
+        page_title=APP_TITLE_KO,
+        layout="wide",
     )
     _init_state()
 
-    st.title(getattr(config, "APP_TITLE", "Receipt organizer"))
-    st.caption("Upload -> Process -> Review -> Download")
+    st.title(APP_TITLE_KO)
+    st.caption("업로드 → 추출 → 검토 및 수정 → 다운로드")
 
-    with st.expander("OCR / Gemini", expanded=False):
-        st.write(
-            "This app uses a Gemini-based OCR backend. Configure the API key on the server "
-            "with Streamlit secrets or environment variables so receipt images are processed."
-        )
-        st.code(
-            '# .streamlit/secrets.toml\nGEMINI_API_KEY = "your-key-here"\n'
-            'GEMINI_MODEL = "gemini-2.5-flash"\n\n'
-            "# or environment variables\n"
-            "export GEMINI_API_KEY=your-key-here\n"
-            "export GEMINI_MODEL=gemini-2.5-flash\n",
-            language="toml",
-        )
+    st.subheader("정보를 입력해 주세요")
+    with st.form("info_form", clear_on_submit=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            raw_name = st.text_input(
+                "이름",
+                value=st.session_state.person_name or "",
+                placeholder="김일렉",
+            )
+            name = raw_name or ""
+        with c2:
+            selected_date = st.date_input(
+                "작성일",
+                value=st.session_state.report_date,
+                format="YYYY-MM-DD",
+            )
+        submitted = st.form_submit_button("계속")
+
+    if submitted:
+        if not name.strip():
+            st.error("이름을 입력해 주세요.")
+        else:
+            next_name = name.strip()
+            changed = (
+                next_name != st.session_state.person_name
+                or selected_date != st.session_state.report_date
+            )
+            st.session_state.person_name = next_name
+            st.session_state.report_date = selected_date
+            if changed:
+                st.session_state.workbook_bytes = None
+                st.session_state.workbook_filename = None
+            st.rerun()
 
     if not st.session_state.person_name:
-        st.subheader("1) Your name")
-        with st.form("name_form", clear_on_submit=False):
-            name = st.text_input("Required", placeholder="e.g. Alex Kim")
-            submitted = st.form_submit_button("Continue")
-        if submitted:
-            if not name.strip():
-                st.error("Please enter your name to continue.")
-            else:
-                st.session_state.person_name = name.strip()
-                st.rerun()
+        st.info("이름과 작성일을 입력한 뒤 계속 진행해 주세요.")
         st.stop()
 
-    st.subheader("2) Upload receipts")
-    st.write(f"Name: **{st.session_state.person_name}**")
-    selected_date = st.date_input(
-        "Report date",
-        value=st.session_state.report_date,
-        format="YYYY-MM-DD",
+    st.subheader("영수증을 첨부해 주세요")
+    st.caption(
+        f"신청자: **{st.session_state.person_name}** · 작성일: **{st.session_state.report_date.isoformat()}**"
     )
-    if selected_date != st.session_state.report_date:
-        st.session_state.report_date = selected_date
-        st.session_state.workbook_bytes = None
-        st.session_state.workbook_filename = None
 
     uploaded_files = st.file_uploader(
-        "Upload PNG/JPG receipts",
+        "영수증 이미지 업로드 (PNG/JPG)",
         type=["png", "jpg", "jpeg"],
         accept_multiple_files=True,
     )
@@ -267,17 +275,17 @@ def main() -> None:
         st.session_state.last_error = None
 
     if not st.session_state.uploads:
-        st.info("Upload one or more receipt images to continue.")
+        st.info("영수증 이미지를 1장 이상 업로드해 주세요.")
         st.stop()
 
-    st.caption("Preview")
+    st.caption("미리보기")
     cols = st.columns(3)
     for i, u in enumerate(st.session_state.uploads):
         with cols[i % 3]:
             st.image(u["bytes"], caption=u["name"], use_container_width=True)
 
-    st.subheader("3) Process")
-    process_clicked = st.button("Process", type="primary")
+    st.subheader("추출")
+    process_clicked = st.button("시작", type="primary")
     if process_clicked:
         st.session_state.last_error = None
         all_rows: list[Any] = []
@@ -285,12 +293,12 @@ def main() -> None:
         ocr_hint: str | None = None
 
         progress = st.progress(0)
-        with st.spinner("Running OCR and parsing receipts..."):
+        with st.spinner("영수증을 인식하고 항목을 추출하는 중..."):
             try:
                 ocr_backend = get_ocr_backend()
             except Exception as e:
                 st.session_state.last_error = (
-                    f"Failed to initialize OCR backend: {type(e).__name__}: {e}"
+                    f"OCR 백엔드를 초기화하지 못했습니다: {type(e).__name__}: {e}"
                 )
                 st.error(st.session_state.last_error)
                 hint = _ocr_init_hint(e)
@@ -335,16 +343,16 @@ def main() -> None:
         st.error(st.session_state.last_error)
 
     if st.session_state.ocr_text_by_file:
-        with st.expander("OCR text (per receipt)", expanded=False):
+        with st.expander("OCR 원문 (영수증별)", expanded=False):
             for fname, text in st.session_state.ocr_text_by_file.items():
                 st.markdown(f"**{fname}**")
                 st.text(text if isinstance(text, str) else str(text))
 
     if not st.session_state.rows_for_edit:
-        st.info("Click **Process** to extract rows from your receipts.")
+        st.info("**시작**을 눌러 영수증에서 항목을 추출하세요.")
         st.stop()
 
-    st.subheader("4) Review / edit")
+    st.subheader("검토 및 수정")
     edited = st.data_editor(
         st.session_state.rows_for_edit,
         num_rows="dynamic",
@@ -359,10 +367,10 @@ def main() -> None:
         st.session_state.workbook_bytes = None
         st.session_state.workbook_filename = None
 
-    st.subheader("5) Download Excel")
+    st.subheader("다운로드")
     if st.session_state.workbook_bytes is None:
         try:
-            with st.spinner("Building workbook..."):
+            with st.spinner("엑셀 파일을 생성하는 중..."):
                 export_rows = _rows_for_export(st.session_state.rows_for_edit)
                 wb = build_workbook_bytes(
                     person_name=st.session_state.person_name,
@@ -372,22 +380,22 @@ def main() -> None:
                     template_path="template.xlsx",
                 )
                 st.session_state.workbook_bytes = wb
-                safe_name = "_".join(st.session_state.person_name.split())
+                safe_name = "".join(st.session_state.person_name.split())
                 month = st.session_state.report_date.strftime("%Y-%m")
                 st.session_state.workbook_filename = (
-                    f"{safe_name}_{month}_receipts.xlsx"
+                    f"{safe_name}-{month}-업무지원금신청.xlsx"
                 )
         except Exception as e:
             st.session_state.last_error = (
-                f"Failed to build workbook: {type(e).__name__}: {e}"
+                f"엑셀 생성에 실패했습니다: {type(e).__name__}: {e}"
             )
             st.error(st.session_state.last_error)
             st.stop()
 
     st.download_button(
-        "Download Excel",
+        "다운로드",
         data=st.session_state.workbook_bytes,
-        file_name=st.session_state.workbook_filename or "receipts.xlsx",
+        file_name=st.session_state.workbook_filename or "업무지원금신청.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
     )
