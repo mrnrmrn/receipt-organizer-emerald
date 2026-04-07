@@ -8,7 +8,6 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from receipt_app.models import ParsedReceipt, UploadedReceipt
 from receipt_app.utils.images import (
-    crop_image_with_normalized_box,
     image_to_pdf_bytes,
     normalize_receipt_image,
     open_image_from_bytes,
@@ -64,8 +63,7 @@ def _receipt_to_pdf_bytes(
     parsed_receipt: ParsedReceipt,
 ) -> bytes:
     image = open_image_from_bytes(receipt.image_bytes)
-    cropped = crop_image_with_normalized_box(image, parsed_receipt.receipt_box)
-    normalized = normalize_receipt_image(cropped)
+    normalized = normalize_receipt_image(image)
     prepared = prepare_image_for_pdf(normalized)
     return image_to_pdf_bytes(prepared)
 
