@@ -172,10 +172,11 @@ def _tesseract_hint(err: Exception) -> str | None:
     if "tesseract" not in msg:
         return None
     return (
-        "OCR errors mentioning Tesseract usually mean it's missing locally.\n\n"
-        "- macOS: `brew install tesseract`\n"
-        "- Ubuntu/Debian: `sudo apt-get install tesseract-ocr`\n"
-        "- Windows: install Tesseract and ensure `tesseract` is on PATH\n"
+        "Tesseract is missing in the current runtime.\n\n"
+        "- Streamlit Community Cloud: add `packages.txt` in the repo root with `tesseract-ocr` and `tesseract-ocr-kor`, then redeploy\n"
+        "- Local macOS: `brew install tesseract`\n"
+        "- Local Ubuntu/Debian: `sudo apt-get install tesseract-ocr`\n"
+        "- Local Windows: install Tesseract and ensure `tesseract` is on PATH\n"
     )
 
 
@@ -190,14 +191,15 @@ def main() -> None:
 
     with st.expander("OCR / Tesseract", expanded=False):
         st.write(
-            "If OCR errors mention *Tesseract* or *tesseract not found*, install it locally and retry. "
-            "The default OCR backend typically depends on a local Tesseract install."
+            "This app uses a Tesseract-based OCR backend. On Streamlit Community Cloud, "
+            "the runtime needs system packages declared in `packages.txt`."
         )
         st.code(
-            "# macOS\n"
-            "brew install tesseract\n\n"
-            "# Ubuntu/Debian\n"
-            "sudo apt-get install tesseract-ocr\n",
+            "# packages.txt (repo root)\n"
+            "tesseract-ocr\n"
+            "tesseract-ocr-kor\n\n"
+            "# local macOS only\n"
+            "brew install tesseract\n",
             language="bash",
         )
 
@@ -251,6 +253,7 @@ def main() -> None:
         st.session_state.last_error = None
         all_rows: list[Any] = []
         ocr_text_by_file: dict[str, str] = {}
+        tesseract_hint: str | None = None
 
         progress = st.progress(0)
         with st.spinner("Running OCR and parsing receipts..."):
@@ -263,7 +266,7 @@ def main() -> None:
                 st.error(st.session_state.last_error)
                 hint = _tesseract_hint(e)
                 if hint:
-                    st.info(hint)
+                    st.warning(hint)
                 st.stop()
 
             total = len(st.session_state.uploads)
@@ -282,10 +285,13 @@ def main() -> None:
                 except Exception as e:
                     ocr_text_by_file[u["name"]] = f"[ERROR] {type(e).__name__}: {e}"
                     hint = _tesseract_hint(e)
-                    if hint:
-                        st.info(hint)
+                    if hint and tesseract_hint is None:
+                        tesseract_hint = hint
                 finally:
                     progress.progress(idx / max(total, 1))
+
+        if tesseract_hint:
+            st.warning(tesseract_hint)
 
         st.session_state.ocr_text_by_file = ocr_text_by_file
         st.session_state.parsed_rows = all_rows
