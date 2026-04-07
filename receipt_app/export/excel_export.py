@@ -71,6 +71,9 @@ def export_receipts_to_workbook(
     sheet = workbook[config.sheet_name]
 
     sheet[config.operator_name_cell] = operator_name
+    report_month = _coerce_report_month(report_month_text)
+    if isinstance(report_month, date):
+        sheet[config.month_cell] = report_month
 
     _write_rows(sheet=sheet, rows=rows, config=config)
     _embed_receipt_images(sheet=sheet, receipts=receipts, config=config)

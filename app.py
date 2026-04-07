@@ -34,6 +34,7 @@ def _sha256(data: bytes) -> str:
 def _init_state() -> None:
     ss = st.session_state
     ss.setdefault("person_name", "")
+    ss.setdefault("report_date", dt.date.today())
     ss.setdefault("uploads", [])
     ss.setdefault("uploads_fingerprint", "")
     ss.setdefault("ocr_text_by_file", {})
@@ -212,6 +213,16 @@ def main() -> None:
 
     st.subheader("2) Upload receipts")
     st.write(f"Name: **{st.session_state.person_name}**")
+    selected_date = st.date_input(
+        "Report date",
+        value=st.session_state.report_date,
+        format="YYYY-MM-DD",
+    )
+    if selected_date != st.session_state.report_date:
+        st.session_state.report_date = selected_date
+        st.session_state.workbook_bytes = None
+        st.session_state.workbook_filename = None
+
     uploaded_files = st.file_uploader(
         "Upload PNG/JPG receipts",
         type=["png", "jpg", "jpeg"],
@@ -333,12 +344,12 @@ def main() -> None:
                     person_name=st.session_state.person_name,
                     rows=export_rows,
                     receipts=_uploads_as_receipts(st.session_state.uploads),
-                    month=dt.date.today().replace(day=1),
+                    month=st.session_state.report_date,
                     template_path="template.xlsx",
                 )
                 st.session_state.workbook_bytes = wb
                 safe_name = "_".join(st.session_state.person_name.split())
-                month = dt.date.today().strftime("%Y-%m")
+                month = st.session_state.report_date.strftime("%Y-%m")
                 st.session_state.workbook_filename = (
                     f"{safe_name}_{month}_receipts.xlsx"
                 )
