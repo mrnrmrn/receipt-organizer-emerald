@@ -10,6 +10,7 @@ from receipt_app.models import ParsedReceipt, UploadedReceipt
 from receipt_app.utils.images import (
     crop_image_with_normalized_box,
     image_to_pdf_bytes,
+    normalize_receipt_image,
     open_image_from_bytes,
     prepare_image_for_pdf,
 )
@@ -64,7 +65,8 @@ def _receipt_to_pdf_bytes(
 ) -> bytes:
     image = open_image_from_bytes(receipt.image_bytes)
     cropped = crop_image_with_normalized_box(image, parsed_receipt.receipt_box)
-    prepared = prepare_image_for_pdf(cropped)
+    normalized = normalize_receipt_image(cropped)
+    prepared = prepare_image_for_pdf(normalized)
     return image_to_pdf_bytes(prepared)
 
 
@@ -77,10 +79,7 @@ def _format_date(value: date | None) -> str:
 def _format_amount(value: Decimal | None) -> str:
     if value is None:
         return "unknown-amount"
-
-    normalized = value.quantize(Decimal("1")) if value == value.to_integral_value() else value
-    text = format(normalized, "f").rstrip("0").rstrip(".")
-    return text or "0"
+    return str(int(value))
 
 
 def _sanitize_filename_component(value: str) -> str:
