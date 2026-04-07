@@ -281,6 +281,7 @@ def main() -> None:
                 else None,
                 "category": parsed.category,
                 "amount": str(parsed.amount) if parsed.amount is not None else None,
+                "receipt_box": list(parsed.receipt_box) if parsed.receipt_box else None,
                 "task_name": st.session_state.task_name_by_date.get(date_key, ""),
                 "person_name": st.session_state.person_name,
                 "pdf_name": build_pdf_filename(

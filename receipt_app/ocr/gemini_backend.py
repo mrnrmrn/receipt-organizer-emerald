@@ -10,7 +10,7 @@ from decimal import Decimal, InvalidOperation
 import streamlit as st
 
 from receipt_app.config import DEFAULT_CONFIG
-from receipt_app.models import OCRResult, ReceiptCategory, UploadedReceipt
+from receipt_app.models import OCRResult, ReceiptBox, ReceiptCategory, UploadedReceipt
 from receipt_app.utils.images import (
     image_to_png_bytes,
     normalize_receipt_image,
@@ -22,9 +22,12 @@ DEFAULT_GEMINI_PROMPT = (
     "Extract the receipt date when visible. "
     "Extract the final charged amount as digits only when visible. "
     "Choose exactly one category from: meal, taxi, coffee, etc. "
+    "Return the full receipt bounding box as [ymin, xmin, ymax, xmax] in normalized 0-1000 coordinates. "
+    "The box should tightly cover the receipt paper visible in the image. "
     "Use etc when the receipt does not clearly fit meal, taxi, or coffee. "
     "If the date is missing or unclear, return null for receipt_date. "
     "If the amount is missing or unclear, return null for amount. "
+    "If the receipt box is missing or unclear, return null for receipt_box. "
     "receipt_date must use YYYY-MM-DD format."
 )
 
@@ -44,8 +47,15 @@ RESPONSE_SCHEMA = {
             "type": ["string", "null"],
             "description": "Final charged amount as a plain number string like 12800, or null if unknown.",
         },
+        "receipt_box": {
+            "type": ["array", "null"],
+            "items": {"type": "integer"},
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Full receipt bounding box as [ymin, xmin, ymax, xmax] using 0-1000 normalized coordinates.",
+        },
     },
-    "required": ["receipt_date", "category", "amount"],
+    "required": ["receipt_date", "category", "amount", "receipt_box"],
     "additionalProperties": False,
 }
 
@@ -170,6 +180,24 @@ def _parse_amount(raw_value: object) -> Decimal | None:
     return amount
 
 
+def _parse_receipt_box(raw_value: object) -> ReceiptBox | None:
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, list) or len(raw_value) != 4:
+        raise ValueError("receipt_box must be an array of four integers or null.")
+
+    coords: list[int] = []
+    for item in raw_value:
+        if not isinstance(item, int):
+            raise ValueError("receipt_box coordinates must be integers.")
+        coords.append(max(0, min(item, 1000)))
+
+    ymin, xmin, ymax, xmax = coords
+    if ymin >= ymax or xmin >= xmax:
+        raise ValueError(f"Invalid receipt_box returned by Gemini: {raw_value}")
+    return (ymin, xmin, ymax, xmax)
+
+
 @dataclass
 class GeminiOCRBackend:
     model: str | None = None
@@ -226,11 +254,13 @@ class GeminiOCRBackend:
         receipt_date = _parse_receipt_date(payload.get("receipt_date"))
         category = _parse_category(payload.get("category"))
         amount = _parse_amount(payload.get("amount"))
+        receipt_box = _parse_receipt_box(payload.get("receipt_box"))
         text = json.dumps(
             {
                 "receipt_date": receipt_date.isoformat() if receipt_date else None,
                 "category": category,
                 "amount": str(amount) if amount is not None else None,
+                "receipt_box": list(receipt_box) if receipt_box else None,
             },
             ensure_ascii=False,
             indent=2,
@@ -242,6 +272,7 @@ class GeminiOCRBackend:
             receipt_date=receipt_date,
             category=category,
             amount=amount,
+            receipt_box=receipt_box,
             language=self.language,
             lines=[],
         )

@@ -8,6 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from receipt_app.models import ParsedReceipt, UploadedReceipt
 from receipt_app.utils.images import (
+    crop_image_with_normalized_box,
     image_to_pdf_bytes,
     open_image_from_bytes,
     prepare_image_for_pdf,
@@ -32,7 +33,7 @@ def build_pdf_archive(
                 person_name=person_name,
                 task_name_by_date=task_name_by_date,
             )
-            pdf_bytes = _receipt_to_pdf_bytes(receipt)
+            pdf_bytes = _receipt_to_pdf_bytes(receipt, parsed_receipt=parsed)
             archive.writestr(filename, pdf_bytes)
             filenames.append(filename)
 
@@ -57,9 +58,13 @@ def build_pdf_filename(
     return f"{task_name}_{date_text}_{person_name_text}_{category_text}_{amount_text}.pdf"
 
 
-def _receipt_to_pdf_bytes(receipt: UploadedReceipt) -> bytes:
+def _receipt_to_pdf_bytes(
+    receipt: UploadedReceipt,
+    parsed_receipt: ParsedReceipt,
+) -> bytes:
     image = open_image_from_bytes(receipt.image_bytes)
-    prepared = prepare_image_for_pdf(image)
+    cropped = crop_image_with_normalized_box(image, parsed_receipt.receipt_box)
+    prepared = prepare_image_for_pdf(cropped)
     return image_to_pdf_bytes(prepared)
 
 

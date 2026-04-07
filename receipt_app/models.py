@@ -7,6 +7,7 @@ from typing import Literal
 
 
 ReceiptCategory = Literal["meal", "taxi", "coffee", "etc"]
+ReceiptBox = tuple[int, int, int, int]
 
 
 @dataclass
@@ -24,6 +25,7 @@ class OCRResult:
     receipt_date: date | None = None
     category: ReceiptCategory = "etc"
     amount: Decimal | None = None
+    receipt_box: ReceiptBox | None = None
     language: str = "kor+eng"
     confidence: float | None = None
     lines: list[str] = field(default_factory=list)
@@ -36,4 +38,5 @@ class ParsedReceipt:
     receipt_date: date | None = None
     category: ReceiptCategory = "etc"
     amount: Decimal | None = None
+    receipt_box: ReceiptBox | None = None
     notes: str | None = None
