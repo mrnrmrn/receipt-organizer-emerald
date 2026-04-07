@@ -17,6 +17,7 @@ from receipt_app.utils.images import (
 def build_pdf_archive(
     receipts: list[UploadedReceipt],
     parsed_receipts: list[ParsedReceipt],
+    person_name: str,
     task_name_by_date: dict[str, str] | None = None,
 ) -> tuple[bytes, list[str]]:
     filenames: list[str] = []
@@ -28,6 +29,7 @@ def build_pdf_archive(
             filename = build_pdf_filename(
                 receipt.file_name,
                 parsed,
+                person_name=person_name,
                 task_name_by_date=task_name_by_date,
             )
             pdf_bytes = _receipt_to_pdf_bytes(receipt)
@@ -40,6 +42,7 @@ def build_pdf_archive(
 def build_pdf_filename(
     source_file_name: str,
     parsed_receipt: ParsedReceipt,
+    person_name: str,
     task_name_by_date: dict[str, str] | None = None,
 ) -> str:
     task_name_by_date = task_name_by_date or {}
@@ -48,9 +51,10 @@ def build_pdf_filename(
     if not task_name:
         task_name = "untitled-task"
     date_text = _format_date(parsed_receipt.receipt_date)
+    person_name_text = _sanitize_filename_component(person_name) or "unknown-name"
     category_text = parsed_receipt.category
     amount_text = _format_amount(parsed_receipt.amount)
-    return f"{task_name}_{date_text}_{category_text}_{amount_text}.pdf"
+    return f"{task_name}_{date_text}_{person_name_text}_{category_text}_{amount_text}.pdf"
 
 
 def _receipt_to_pdf_bytes(receipt: UploadedReceipt) -> bytes:

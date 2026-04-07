@@ -29,6 +29,7 @@ def _sha256(data: bytes) -> str:
 
 def _init_state() -> None:
     ss = st.session_state
+    ss.setdefault("person_name", "")
     ss.setdefault("uploads", [])
     ss.setdefault("uploads_fingerprint", "")
     ss.setdefault("processed_receipts", [])
@@ -86,6 +87,10 @@ def _archive_basename(uploads: list[dict[str, Any]]) -> str:
     return f"receipts_{len(uploads)}"
 
 
+def _sanitize_person_name(value: str) -> str:
+    return " ".join(value.split()).strip()
+
+
 def _receipt_date_key(receipt: Any) -> str:
     receipt_date = getattr(receipt, "receipt_date", None)
     return receipt_date.isoformat() if receipt_date else "unknown-date"
@@ -123,6 +128,23 @@ def main() -> None:
 
     st.title(APP_TITLE_KO)
     st.caption("업로드 → OCR 추출 → PDF 변환 → ZIP 다운로드")
+
+    st.subheader("이름을 입력해 주세요")
+    person_name_input = st.text_input(
+        "이름",
+        value=st.session_state.person_name,
+        placeholder="김에메",
+    )
+    normalized_person_name = _sanitize_person_name(person_name_input)
+    if normalized_person_name != st.session_state.person_name:
+        st.session_state.person_name = normalized_person_name
+        st.session_state.pdf_archive_bytes = None
+        st.session_state.pdf_archive_filename = None
+        st.session_state.generated_pdf_names = []
+
+    if not st.session_state.person_name:
+        st.info("이름을 입력한 뒤 진행해 주세요.")
+        st.stop()
 
     st.subheader("영수증을 첨부해 주세요")
 
@@ -260,9 +282,11 @@ def main() -> None:
                 "category": parsed.category,
                 "amount": str(parsed.amount) if parsed.amount is not None else None,
                 "task_name": st.session_state.task_name_by_date.get(date_key, ""),
+                "person_name": st.session_state.person_name,
                 "pdf_name": build_pdf_filename(
                     parsed.source_file_name,
                     parsed,
+                    person_name=st.session_state.person_name,
                     task_name_by_date=st.session_state.task_name_by_date,
                 ),
             }
@@ -279,6 +303,7 @@ def main() -> None:
                 archive_bytes, generated_names = build_pdf_archive(
                     receipts=st.session_state.processed_receipts,
                     parsed_receipts=st.session_state.parsed_receipts,
+                    person_name=st.session_state.person_name,
                     task_name_by_date=st.session_state.task_name_by_date,
                 )
                 st.session_state.pdf_archive_bytes = archive_bytes
