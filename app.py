@@ -185,14 +185,6 @@ def _uploads_as_receipts(uploads: list[dict[str, Any]]) -> list[Any]:
 
 def _ocr_init_hint(err: Exception) -> str | None:
     msg = f"{type(err).__name__}: {err}".lower()
-    if "tesseract" in msg:
-        return (
-            "Tesseract is missing in the current runtime.\n\n"
-            "- Streamlit Community Cloud: add `packages.txt` in the repo root with `tesseract-ocr` and `tesseract-ocr-kor`, then redeploy\n"
-            "- Local macOS: `brew install tesseract`\n"
-            "- Local Ubuntu/Debian: `sudo apt-get install tesseract-ocr`\n"
-            "- Local Windows: install Tesseract and ensure `tesseract` is on PATH\n"
-        )
     if "gemini" in msg or "google" in msg or "api key" in msg:
         return (
             "Gemini API key may be missing or invalid.\n\n"
@@ -201,7 +193,7 @@ def _ocr_init_hint(err: Exception) -> str | None:
             'GEMINI_API_KEY = "your-key-here"\n'
             'GEMINI_MODEL = "gemini-2.5-flash"\n'
             "```\n"
-            "Or set `GEMINI_API_KEY` and `OCR_BACKEND=gemini` in the server environment.\n"
+            "Or set `GEMINI_API_KEY` and `GEMINI_MODEL` in the server environment.\n"
             "Get a key from: https://aistudio.google.com/app/apikey\n"
         )
     return None
@@ -219,15 +211,14 @@ def main() -> None:
     with st.expander("OCR / Gemini", expanded=False):
         st.write(
             "This app uses a Gemini-based OCR backend. Configure the API key on the server "
-            "with Streamlit secrets or environment variables so receipt images are processed "
-            "without local Tesseract dependencies."
+            "with Streamlit secrets or environment variables so receipt images are processed."
         )
         st.code(
             '# .streamlit/secrets.toml\nGEMINI_API_KEY = "your-key-here"\n'
             'GEMINI_MODEL = "gemini-2.5-flash"\n\n'
             "# or environment variables\n"
             "export GEMINI_API_KEY=your-key-here\n"
-            "export OCR_BACKEND=gemini\n",
+            "export GEMINI_MODEL=gemini-2.5-flash\n",
             language="toml",
         )
 
