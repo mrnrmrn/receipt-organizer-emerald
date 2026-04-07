@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 import re
@@ -18,13 +17,19 @@ from receipt_app.utils.images import (
 def build_pdf_archive(
     receipts: list[UploadedReceipt],
     parsed_receipts: list[ParsedReceipt],
+    task_name_by_date: dict[str, str] | None = None,
 ) -> tuple[bytes, list[str]]:
     filenames: list[str] = []
     output = BytesIO()
+    task_name_by_date = task_name_by_date or {}
 
     with ZipFile(output, mode="w", compression=ZIP_DEFLATED) as archive:
         for receipt, parsed in zip(receipts, parsed_receipts):
-            filename = build_pdf_filename(receipt.file_name, parsed)
+            filename = build_pdf_filename(
+                receipt.file_name,
+                parsed,
+                task_name_by_date=task_name_by_date,
+            )
             pdf_bytes = _receipt_to_pdf_bytes(receipt)
             archive.writestr(filename, pdf_bytes)
             filenames.append(filename)
@@ -32,11 +37,19 @@ def build_pdf_archive(
     return output.getvalue(), filenames
 
 
-def build_pdf_filename(source_file_name: str, parsed_receipt: ParsedReceipt) -> str:
+def build_pdf_filename(
+    source_file_name: str,
+    parsed_receipt: ParsedReceipt,
+    task_name_by_date: dict[str, str] | None = None,
+) -> str:
+    task_name_by_date = task_name_by_date or {}
+    date_key = parsed_receipt.receipt_date.isoformat() if parsed_receipt.receipt_date else "unknown-date"
+    task_name = _sanitize_filename_component(task_name_by_date.get(date_key, ""))
+    if not task_name:
+        task_name = "untitled-task"
     date_text = _format_date(parsed_receipt.receipt_date)
-    amount_text = _format_amount(parsed_receipt.amount)
     original_name = _sanitize_filename_component(Path(source_file_name).stem)
-    return f"{date_text}_{amount_text}_{original_name}.pdf"
+    return f"{task_name}_{date_text}_{original_name}.pdf"
 
 
 def _receipt_to_pdf_bytes(receipt: UploadedReceipt) -> bytes:
@@ -48,16 +61,7 @@ def _receipt_to_pdf_bytes(receipt: UploadedReceipt) -> bytes:
 def _format_date(value: date | None) -> str:
     if value is None:
         return "unknown-date"
-    return value.isoformat()
-
-
-def _format_amount(value: Decimal | None) -> str:
-    if value is None:
-        return "unknown-amount"
-
-    normalized = value.quantize(Decimal("1")) if value == value.to_integral_value() else value
-    text = format(normalized, "f").rstrip("0").rstrip(".")
-    return text or "0"
+    return value.strftime("%d%b%Y")
 
 
 def _sanitize_filename_component(value: str) -> str:

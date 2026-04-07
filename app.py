@@ -20,7 +20,7 @@ except Exception as e:
     st.stop()
 
 
-APP_TITLE_KO = "영수증 PDF 변환기"
+APP_TITLE_KO = "에메랄드 영수증"
 
 
 def _sha256(data: bytes) -> str:
@@ -34,6 +34,7 @@ def _init_state() -> None:
     ss.setdefault("processed_receipts", [])
     ss.setdefault("ocr_text_by_file", {})
     ss.setdefault("parsed_receipts", [])
+    ss.setdefault("task_name_by_date", {})
     ss.setdefault("pdf_archive_bytes", None)
     ss.setdefault("pdf_archive_filename", None)
     ss.setdefault("generated_pdf_names", [])
@@ -85,6 +86,34 @@ def _archive_basename(uploads: list[dict[str, Any]]) -> str:
     return f"receipts_{len(uploads)}"
 
 
+def _receipt_date_key(receipt: Any) -> str:
+    receipt_date = getattr(receipt, "receipt_date", None)
+    return receipt_date.isoformat() if receipt_date else "unknown-date"
+
+
+def _receipt_date_label(date_key: str) -> str:
+    if date_key == "unknown-date":
+        return "날짜 미인식"
+    return date_key
+
+
+def _build_task_name_map(
+    parsed_receipts: list[Any],
+    existing: dict[str, str] | None = None,
+) -> dict[str, str]:
+    existing = existing or {}
+    date_keys = {_receipt_date_key(parsed) for parsed in parsed_receipts}
+    return {date_key: existing.get(date_key, "") for date_key in sorted(date_keys)}
+
+
+def _missing_task_name_dates(task_name_by_date: dict[str, str]) -> list[str]:
+    return [
+        date_key
+        for date_key, task_name in sorted(task_name_by_date.items())
+        if not task_name.strip()
+    ]
+
+
 def main() -> None:
     st.set_page_config(
         page_title=APP_TITLE_KO,
@@ -111,6 +140,7 @@ def main() -> None:
         st.session_state.processed_receipts = []
         st.session_state.ocr_text_by_file = {}
         st.session_state.parsed_receipts = []
+        st.session_state.task_name_by_date = {}
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
@@ -177,6 +207,10 @@ def main() -> None:
         st.session_state.processed_receipts = successful_receipts
         st.session_state.ocr_text_by_file = ocr_text_by_file
         st.session_state.parsed_receipts = all_receipts
+        st.session_state.task_name_by_date = _build_task_name_map(
+            all_receipts,
+            st.session_state.task_name_by_date,
+        )
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
@@ -194,9 +228,29 @@ def main() -> None:
         st.info("**PDF 만들기**를 눌러 영수증별 PDF를 생성하세요.")
         st.stop()
 
+    st.subheader("과제명 입력")
+    with st.form("task_name_form", clear_on_submit=False):
+        updated_task_names: dict[str, str] = {}
+        for date_key in sorted(st.session_state.task_name_by_date):
+            updated_task_names[date_key] = st.text_input(
+                f"{_receipt_date_label(date_key)} 과제명",
+                value=st.session_state.task_name_by_date.get(date_key, ""),
+                placeholder="예: 고객 인터뷰, 디자인 시스템 정리",
+            )
+        task_names_submitted = st.form_submit_button("과제명 저장")
+
+    if task_names_submitted:
+        st.session_state.task_name_by_date = updated_task_names
+
+    missing_task_name_dates = _missing_task_name_dates(st.session_state.task_name_by_date)
+    if missing_task_name_dates:
+        labels = ", ".join(_receipt_date_label(date_key) for date_key in missing_task_name_dates)
+        st.warning(f"과제명을 모두 입력해 주세요. 누락 날짜: {labels}")
+
     st.subheader("변환 결과")
     preview_rows = []
     for parsed in st.session_state.parsed_receipts:
+        date_key = _receipt_date_key(parsed)
         preview_rows.append(
             {
                 "source_file_name": parsed.source_file_name,
@@ -205,18 +259,27 @@ def main() -> None:
                 else None,
                 "amount": str(parsed.amount) if parsed.amount is not None else None,
                 "vendor": parsed.vendor,
-                "pdf_name": build_pdf_filename(parsed.source_file_name, parsed),
+                "task_name": st.session_state.task_name_by_date.get(date_key, ""),
+                "pdf_name": build_pdf_filename(
+                    parsed.source_file_name,
+                    parsed,
+                    task_name_by_date=st.session_state.task_name_by_date,
+                ),
             }
         )
     st.dataframe(preview_rows, use_container_width=True)
 
     st.subheader("다운로드")
+    if missing_task_name_dates:
+        st.stop()
+
     if st.session_state.pdf_archive_bytes is None:
         try:
             with st.spinner("PDF ZIP 파일을 생성하는 중..."):
                 archive_bytes, generated_names = build_pdf_archive(
                     receipts=st.session_state.processed_receipts,
                     parsed_receipts=st.session_state.parsed_receipts,
+                    task_name_by_date=st.session_state.task_name_by_date,
                 )
                 st.session_state.pdf_archive_bytes = archive_bytes
                 st.session_state.generated_pdf_names = generated_names
