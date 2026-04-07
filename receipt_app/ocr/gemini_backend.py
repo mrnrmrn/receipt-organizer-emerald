@@ -22,8 +22,8 @@ DEFAULT_GEMINI_PROMPT = (
     "Extract the receipt date when visible. "
     "Extract the final charged amount as digits only when visible. "
     "Choose exactly one category from: meal, taxi, coffee, etc. "
-    "Return the full receipt bounding box as [ymin, xmin, ymax, xmax] in normalized 0-1000 coordinates. "
-    "The box should tightly cover the receipt paper visible in the image. "
+    "Return the receipt content bounding box as [ymin, xmin, ymax, xmax] in normalized 0-1000 coordinates. "
+    "The box should tightly cover the visible printed or handwritten receipt content, not the full paper edges. "
     "Use etc when the receipt does not clearly fit meal, taxi, or coffee. "
     "If the date is missing or unclear, return null for receipt_date. "
     "If the amount is missing or unclear, return null for amount. "
@@ -52,7 +52,7 @@ RESPONSE_SCHEMA = {
             "items": {"type": "integer"},
             "minItems": 4,
             "maxItems": 4,
-            "description": "Full receipt bounding box as [ymin, xmin, ymax, xmax] using 0-1000 normalized coordinates.",
+            "description": "Receipt content bounding box as [ymin, xmin, ymax, xmax] using 0-1000 normalized coordinates.",
         },
     },
     "required": ["receipt_date", "category", "amount", "receipt_box"],
