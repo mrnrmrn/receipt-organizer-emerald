@@ -7,7 +7,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles.colors import Color
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -63,28 +63,43 @@ def export_receipts_to_workbook(
     template_path: str | Path | None = None,
     config: AppConfig = DEFAULT_CONFIG,
 ) -> bytes:
-    workbook = _create_workbook(config)
+    workbook = _load_template_workbook(template_path=template_path, config=config)
     sheet = workbook[config.sheet_name]
 
-    _ = template_path
     sheet[config.operator_name_cell] = operator_name
-    sheet[config.total_amount_cell] = "=SUM(E7:E28)"
-
-    report_month = _coerce_report_month(report_month_text)
-    sheet[config.month_cell] = report_month
-    if isinstance(report_month, date):
-        sheet[config.month_cell].number_format = "mmm-yy"
 
     _write_rows(sheet=sheet, rows=rows, config=config)
     _embed_receipt_images(sheet=sheet, receipts=receipts, config=config)
 
-    workbook.calculation.calcMode = "auto"
-    workbook.calculation.fullCalcOnLoad = True
-    workbook.calculation.forceFullCalc = True
+    calculation = getattr(workbook, "calculation", None)
+    if calculation is not None:
+        calculation.calcMode = "auto"
+        calculation.fullCalcOnLoad = True
+        calculation.forceFullCalc = True
 
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def _load_template_workbook(
+    template_path: str | Path | None, config: AppConfig
+) -> Workbook:
+    resolved_template_path = _resolve_template_path(template_path)
+    workbook = load_workbook(resolved_template_path)
+
+    if config.sheet_name not in workbook.sheetnames:
+        raise ValueError(
+            f"Template workbook is missing required sheet '{config.sheet_name}'."
+        )
+
+    return workbook
+
+
+def _resolve_template_path(template_path: str | Path | None) -> Path:
+    if template_path is not None:
+        return Path(template_path)
+    return Path(__file__).resolve().parents[2] / "template.xlsx"
 
 
 def _create_workbook(config: AppConfig) -> Workbook:
@@ -511,7 +526,7 @@ def _write_guide_notice_section(sheet: Worksheet, config: AppConfig) -> None:
 
 
 def _write_rows(sheet: Worksheet, rows: list[ExportRow], config: AppConfig) -> None:
-    for row_number in range(config.table_start_row, config.table_border_end_row + 1):
+    for row_number in range(config.table_start_row, config.numbered_table_end_row + 1):
         for column in (
             config.category_column,
             config.subcategory_column,
@@ -539,7 +554,13 @@ def _embed_receipt_images(
     sheet: Worksheet, receipts: list[UploadedReceipt], config: AppConfig
 ) -> None:
     if hasattr(sheet, "_images"):
-        cast(Any, sheet)._images = []
+        receipt_anchor_cells = set(config.image_anchor_cells)
+        existing_images = cast(list[Any], cast(Any, sheet)._images)
+        cast(Any, sheet)._images = [
+            image
+            for image in existing_images
+            if _get_image_anchor_cell(image) not in receipt_anchor_cells
+        ]
 
     for receipt, anchor in zip(
         receipts[: config.max_receipt_images], config.image_anchor_cells
@@ -553,6 +574,23 @@ def _embed_receipt_images(
         excel_image = XLImage(BytesIO(image_to_png_bytes(resized)))
         excel_image.anchor = anchor
         sheet.add_image(excel_image)
+
+
+def _get_image_anchor_cell(image: Any) -> str | None:
+    anchor = getattr(image, "anchor", None)
+    if isinstance(anchor, str):
+        return anchor
+
+    marker = getattr(anchor, "_from", None)
+    if marker is None:
+        return None
+
+    column = getattr(marker, "col", None)
+    row = getattr(marker, "row", None)
+    if not isinstance(column, int) or not isinstance(row, int):
+        return None
+
+    return f"{chr(ord('A') + column)}{row + 1}"
 
 
 def _coerce_report_month(report_month_text: date | str) -> date | str:

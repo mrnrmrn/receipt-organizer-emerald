@@ -334,6 +334,7 @@ def main() -> None:
                     rows=export_rows,
                     receipts=_uploads_as_receipts(st.session_state.uploads),
                     month=dt.date.today().replace(day=1),
+                    template_path="template.xlsx",
                 )
                 st.session_state.workbook_bytes = wb
                 safe_name = "_".join(st.session_state.person_name.split())
