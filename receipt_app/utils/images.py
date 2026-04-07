@@ -19,16 +19,16 @@ def normalize_receipt_image(image: Image.Image) -> Image.Image:
     return autocontrasted
 
 
-def resize_for_excel(
-    image: Image.Image, max_width: int = 420, max_height: int = 260
-) -> Image.Image:
-    converted = image.convert("RGB")
-    resized = converted.copy()
-    resized.thumbnail((max_width, max_height))
-    return resized
-
-
+def prepare_image_for_pdf(image: Image.Image) -> Image.Image:
+    normalized = ImageOps.exif_transpose(image)
+    return normalized.convert("RGB")
 def image_to_png_bytes(image: Image.Image) -> bytes:
     with BytesIO() as buffer:
         image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def image_to_pdf_bytes(image: Image.Image) -> bytes:
+    with BytesIO() as buffer:
+        image.save(buffer, format="PDF")
         return buffer.getvalue()

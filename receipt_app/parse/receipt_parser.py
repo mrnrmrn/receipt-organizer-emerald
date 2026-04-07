@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from receipt_app.config import DEFAULT_CONFIG
 from receipt_app.models import OCRResult, ParsedReceipt
 
 AMOUNT_PATTERNS = (
@@ -31,8 +30,6 @@ SKIP_VENDOR_PATTERNS = (
 
 @dataclass
 class ReceiptParser:
-    category_rules: dict[str, tuple[str, str]]
-
     def parse(self, ocr_result: OCRResult) -> ParsedReceipt:
         text = ocr_result.text.strip()
         lines = ocr_result.lines or [
@@ -41,15 +38,12 @@ class ReceiptParser:
         amount = self._extract_amount(text, lines)
         receipt_date = self._extract_date(text)
         vendor = self._extract_vendor(lines)
-        category, subcategory = self._guess_category(text, vendor)
         return ParsedReceipt(
             source_file_name=ocr_result.source_file_name,
             raw_text=text,
             amount=amount,
             receipt_date=receipt_date,
             vendor=vendor,
-            category=category,
-            subcategory=subcategory,
             notes=None,
         )
 
@@ -125,14 +119,6 @@ class ReceiptParser:
             return line[:60]
         return None
 
-    def _guess_category(self, text: str, vendor: str | None) -> tuple[str, str]:
-        haystack = f"{text}\n{vendor or ''}".lower()
-        for keyword, category_pair in self.category_rules.items():
-            if keyword.lower() in haystack:
-                return category_pair
-        return ("기타", "기타")
-
-
 def parse_receipt_text(ocr_result: OCRResult) -> ParsedReceipt:
-    parser = ReceiptParser(category_rules=DEFAULT_CONFIG.category_rules)
+    parser = ReceiptParser()
     return parser.parse(ocr_result)

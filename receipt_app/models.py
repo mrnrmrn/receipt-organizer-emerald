@@ -29,22 +29,4 @@ class ParsedReceipt:
     amount: Decimal | None = None
     receipt_date: date | None = None
     vendor: str | None = None
-    category: str = "기타"
-    subcategory: str = "기타"
     notes: str | None = None
-
-
-@dataclass
-class ExportRow:
-    number: int
-    category: str
-    subcategory: str
-    amount: Decimal
-    vendor: str | None = None
-    receipt_date: date | None = None
-    notes: str | None = None
-
-    @property
-    def note_text(self) -> str:
-        parts = [part for part in (self.vendor, self.notes) if part]
-        return " / ".join(parts)
