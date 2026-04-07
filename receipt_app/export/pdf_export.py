@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from io import BytesIO
-from pathlib import Path
 import re
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -48,8 +48,9 @@ def build_pdf_filename(
     if not task_name:
         task_name = "untitled-task"
     date_text = _format_date(parsed_receipt.receipt_date)
-    original_name = _sanitize_filename_component(Path(source_file_name).stem)
-    return f"{task_name}_{date_text}_{original_name}.pdf"
+    category_text = parsed_receipt.category
+    amount_text = _format_amount(parsed_receipt.amount)
+    return f"{task_name}_{date_text}_{category_text}_{amount_text}.pdf"
 
 
 def _receipt_to_pdf_bytes(receipt: UploadedReceipt) -> bytes:
@@ -62,6 +63,15 @@ def _format_date(value: date | None) -> str:
     if value is None:
         return "unknown-date"
     return value.strftime("%d%b%Y")
+
+
+def _format_amount(value: Decimal | None) -> str:
+    if value is None:
+        return "unknown-amount"
+
+    normalized = value.quantize(Decimal("1")) if value == value.to_integral_value() else value
+    text = format(normalized, "f").rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _sanitize_filename_component(value: str) -> str:

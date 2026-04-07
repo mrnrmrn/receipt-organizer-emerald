@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import Literal
+
+
+ReceiptCategory = Literal["meal", "taxi", "coffee", "etc"]
 
 
 @dataclass
@@ -17,6 +21,9 @@ class OCRResult:
     source_file_name: str
     text: str
     backend_name: str
+    receipt_date: date | None = None
+    category: ReceiptCategory = "etc"
+    amount: Decimal | None = None
     language: str = "kor+eng"
     confidence: float | None = None
     lines: list[str] = field(default_factory=list)
@@ -26,7 +33,7 @@ class OCRResult:
 class ParsedReceipt:
     source_file_name: str
     raw_text: str
-    amount: Decimal | None = None
     receipt_date: date | None = None
-    vendor: str | None = None
+    category: ReceiptCategory = "etc"
+    amount: Decimal | None = None
     notes: str | None = None

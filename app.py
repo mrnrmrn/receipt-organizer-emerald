@@ -257,8 +257,8 @@ def main() -> None:
                 "receipt_date": parsed.receipt_date.isoformat()
                 if parsed.receipt_date
                 else None,
+                "category": parsed.category,
                 "amount": str(parsed.amount) if parsed.amount is not None else None,
-                "vendor": parsed.vendor,
                 "task_name": st.session_state.task_name_by_date.get(date_key, ""),
                 "pdf_name": build_pdf_filename(
                     parsed.source_file_name,

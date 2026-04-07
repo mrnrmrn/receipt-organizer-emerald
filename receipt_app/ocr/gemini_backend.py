@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, InvalidOperation
 
 import streamlit as st
 
 from receipt_app.config import DEFAULT_CONFIG
-from receipt_app.models import OCRResult, UploadedReceipt
+from receipt_app.models import OCRResult, ReceiptCategory, UploadedReceipt
 from receipt_app.utils.images import (
     image_to_png_bytes,
     normalize_receipt_image,
@@ -15,10 +18,36 @@ from receipt_app.utils.images import (
 )
 
 DEFAULT_GEMINI_PROMPT = (
-    "Extract all visible receipt text in reading order. "
-    "Return only the OCR text with line breaks preserved. "
-    "Do not summarize, translate, label fields, or add commentary."
+    "Analyze the receipt image and return a JSON object. "
+    "Extract the receipt date when visible. "
+    "Extract the final charged amount as digits only when visible. "
+    "Choose exactly one category from: meal, taxi, coffee, etc. "
+    "Use etc when the receipt does not clearly fit meal, taxi, or coffee. "
+    "If the date is missing or unclear, return null for receipt_date. "
+    "If the amount is missing or unclear, return null for amount. "
+    "receipt_date must use YYYY-MM-DD format."
 )
+
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "receipt_date": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Receipt date in YYYY-MM-DD format, or null if unknown.",
+        },
+        "category": {
+            "type": "string",
+            "enum": ["meal", "taxi", "coffee", "etc"],
+        },
+        "amount": {
+            "type": ["string", "null"],
+            "description": "Final charged amount as a plain number string like 12800, or null if unknown.",
+        },
+    },
+    "required": ["receipt_date", "category", "amount"],
+    "additionalProperties": False,
+}
 
 
 def _read_streamlit_secret(name: str) -> str | None:
@@ -84,6 +113,63 @@ def _collect_response_text(response: object) -> str:
     return "\n".join(parts_text).strip()
 
 
+def _parse_structured_payload(response: object) -> dict[str, object]:
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, dict):
+        return parsed
+
+    text = _collect_response_text(response)
+    if not text:
+        raise ValueError("Gemini returned an empty structured response.")
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Gemini returned invalid JSON: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("Gemini structured response must be a JSON object.")
+
+    return payload
+
+
+def _parse_receipt_date(raw_value: object) -> date | None:
+    if raw_value in (None, ""):
+        return None
+    if not isinstance(raw_value, str):
+        raise ValueError("receipt_date must be a string or null.")
+    try:
+        return date.fromisoformat(raw_value[:10])
+    except ValueError as exc:
+        raise ValueError(f"Invalid receipt_date format: {raw_value}") from exc
+
+
+def _parse_category(raw_value: object) -> ReceiptCategory:
+    if raw_value not in {"meal", "taxi", "coffee", "etc"}:
+        raise ValueError(f"Invalid category returned by Gemini: {raw_value}")
+    return raw_value
+
+
+def _parse_amount(raw_value: object) -> Decimal | None:
+    if raw_value in (None, ""):
+        return None
+    if not isinstance(raw_value, str):
+        raise ValueError("amount must be a string or null.")
+
+    normalized = raw_value.replace(",", "").strip()
+    if not normalized:
+        return None
+
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation as exc:
+        raise ValueError(f"Invalid amount returned by Gemini: {raw_value}") from exc
+
+    if amount < 0:
+        raise ValueError(f"Invalid negative amount returned by Gemini: {raw_value}")
+    return amount
+
+
 @dataclass
 class GeminiOCRBackend:
     model: str | None = None
@@ -129,18 +215,33 @@ class GeminiOCRBackend:
                     ],
                 )
             ],
-            config=types.GenerateContentConfig(temperature=0),
+            config=types.GenerateContentConfig(
+                temperature=0,
+                response_mime_type="application/json",
+                response_json_schema=RESPONSE_SCHEMA,
+            ),
         )
 
-        text = _collect_response_text(response)
-        if not text:
-            raise ValueError("Gemini returned an empty OCR response.")
-
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        payload = _parse_structured_payload(response)
+        receipt_date = _parse_receipt_date(payload.get("receipt_date"))
+        category = _parse_category(payload.get("category"))
+        amount = _parse_amount(payload.get("amount"))
+        text = json.dumps(
+            {
+                "receipt_date": receipt_date.isoformat() if receipt_date else None,
+                "category": category,
+                "amount": str(amount) if amount is not None else None,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
         return OCRResult(
             source_file_name=receipt.file_name,
             text=text,
             backend_name=self.backend_name,
+            receipt_date=receipt_date,
+            category=category,
+            amount=amount,
             language=self.language,
-            lines=lines,
+            lines=[],
         )
