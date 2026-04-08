@@ -30,6 +30,7 @@ def _sha256(data: bytes) -> str:
 def _init_state() -> None:
     ss = st.session_state
     ss.setdefault("person_name", "")
+    ss.setdefault("binarization_threshold", 70)
     ss.setdefault("uploads", [])
     ss.setdefault("uploads_fingerprint", "")
     ss.setdefault("processed_receipts", [])
@@ -146,6 +147,22 @@ def main() -> None:
         st.info("이름을 입력한 뒤 진행해 주세요.")
         st.stop()
 
+    st.subheader("보정 설정")
+    threshold_input = st.number_input(
+        "흑백 임계값",
+        min_value=0,
+        max_value=255,
+        value=int(st.session_state.binarization_threshold),
+        step=1,
+        help="값 이상은 흰색, 미만은 검정으로 처리합니다.",
+    )
+    threshold_value = int(threshold_input)
+    if threshold_value != st.session_state.binarization_threshold:
+        st.session_state.binarization_threshold = threshold_value
+        st.session_state.pdf_archive_bytes = None
+        st.session_state.pdf_archive_filename = None
+        st.session_state.generated_pdf_names = []
+
     st.subheader("영수증을 첨부해 주세요")
 
     uploaded_files = st.file_uploader(
@@ -190,7 +207,9 @@ def main() -> None:
         progress = st.progress(0)
         with st.spinner("영수증을 인식하고 항목을 추출하는 중..."):
             try:
-                ocr_backend = get_ocr_backend()
+                ocr_backend = get_ocr_backend(
+                    threshold=st.session_state.binarization_threshold
+                )
             except Exception as e:
                 st.session_state.last_error = (
                     f"OCR 백엔드를 초기화하지 못했습니다: {type(e).__name__}: {e}"
@@ -305,6 +324,7 @@ def main() -> None:
                     receipts=st.session_state.processed_receipts,
                     parsed_receipts=st.session_state.parsed_receipts,
                     person_name=st.session_state.person_name,
+                    threshold=st.session_state.binarization_threshold,
                     task_name_by_date=st.session_state.task_name_by_date,
                 )
                 st.session_state.pdf_archive_bytes = archive_bytes

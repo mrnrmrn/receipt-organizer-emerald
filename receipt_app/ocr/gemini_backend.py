@@ -12,6 +12,7 @@ import streamlit as st
 from receipt_app.config import DEFAULT_CONFIG
 from receipt_app.models import OCRResult, ReceiptBox, ReceiptCategory, UploadedReceipt
 from receipt_app.utils.images import (
+    binarize_receipt_image,
     image_to_png_bytes,
     normalize_receipt_image,
     open_image_from_bytes,
@@ -204,6 +205,7 @@ class GeminiOCRBackend:
     prompt: str = DEFAULT_GEMINI_PROMPT
     backend_name: str = "gemini"
     language: str = "ko,en"
+    threshold: int = 70
 
     def extract_text(self, receipt: UploadedReceipt) -> OCRResult:
         from google import genai  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
@@ -229,7 +231,8 @@ class GeminiOCRBackend:
 
         image = open_image_from_bytes(receipt.image_bytes)
         normalized = normalize_receipt_image(image)
-        png_bytes = image_to_png_bytes(normalized)
+        binarized = binarize_receipt_image(normalized, threshold=self.threshold)
+        png_bytes = image_to_png_bytes(binarized)
 
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(

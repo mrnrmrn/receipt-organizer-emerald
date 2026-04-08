@@ -16,7 +16,12 @@ def normalize_receipt_image(image: Image.Image) -> Image.Image:
     normalized = ImageOps.exif_transpose(image)
     grayscale = ImageOps.grayscale(normalized)
     autocontrasted = ImageOps.autocontrast(grayscale)
-    return autocontrasted.point(lambda px: 255 if px >= 50 else 0, mode="L")
+    return autocontrasted
+
+
+def binarize_receipt_image(image: Image.Image, threshold: int = 70) -> Image.Image:
+    clamped_threshold = max(0, min(int(threshold), 255))
+    return image.point(lambda px: 255 if px >= clamped_threshold else 0, mode="L")
 
 
 def prepare_image_for_pdf(image: Image.Image) -> Image.Image:
