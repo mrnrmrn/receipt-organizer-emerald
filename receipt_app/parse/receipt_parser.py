@@ -15,6 +15,7 @@ class ReceiptParser:
             category=ocr_result.category,
             amount=ocr_result.amount,
             receipt_box=ocr_result.receipt_box,
+            task_name=None,
             notes=None,
         )
 

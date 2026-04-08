@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import datetime as dt
 import hashlib
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import streamlit as st
@@ -10,12 +13,6 @@ try:
     from receipt_app.export import build_pdf_archive, build_pdf_filename
     from receipt_app.ocr import get_ocr_backend
     from receipt_app.parse.receipt_parser import parse_receipt_text
-    from receipt_app.utils.images import (
-        binarize_receipt_image,
-        image_to_png_bytes,
-        normalize_receipt_image,
-        open_image_from_bytes,
-    )
 except Exception as e:
     st.error(
         "백엔드 패키지를 불러오지 못했습니다.\n\n"
@@ -27,6 +24,7 @@ except Exception as e:
 
 
 APP_TITLE_KO = "에메랄드 영수증"
+OCR_MAX_WORKERS = 4
 
 
 def _sha256(data: bytes) -> str:
@@ -36,13 +34,12 @@ def _sha256(data: bytes) -> str:
 def _init_state() -> None:
     ss = st.session_state
     ss.setdefault("person_name", "")
-    ss.setdefault("binarization_threshold", 100)
     ss.setdefault("uploads", [])
     ss.setdefault("uploads_fingerprint", "")
     ss.setdefault("processed_receipts", [])
     ss.setdefault("ocr_text_by_file", {})
     ss.setdefault("parsed_receipts", [])
-    ss.setdefault("task_name_by_date", {})
+    ss.setdefault("rows_for_edit", [])
     ss.setdefault("pdf_archive_bytes", None)
     ss.setdefault("pdf_archive_filename", None)
     ss.setdefault("generated_pdf_names", [])
@@ -68,6 +65,17 @@ def _uploads_from_uploader(uploaded_files: list[Any] | None) -> list[dict[str, A
 
 def _uploads_fingerprint(uploads: list[dict[str, Any]]) -> str:
     return "|".join(f"{u['name']}:{u['sha']}" for u in uploads)
+
+
+def _uploads_as_receipts(uploads: list[dict[str, Any]]) -> list[models.UploadedReceipt]:
+    return [
+        models.UploadedReceipt(
+            file_name=upload["name"],
+            image_bytes=upload["bytes"],
+            mime_type=upload.get("type") or "image/png",
+        )
+        for upload in uploads
+    ]
 
 
 def _ocr_init_hint(err: Exception) -> str | None:
@@ -98,39 +106,85 @@ def _sanitize_person_name(value: str) -> str:
     return " ".join(value.split()).strip()
 
 
-def _render_preview_image(image_bytes: bytes, threshold: int) -> bytes:
-    image = open_image_from_bytes(image_bytes)
-    normalized = normalize_receipt_image(image)
-    binarized = binarize_receipt_image(normalized, threshold=threshold)
-    return image_to_png_bytes(binarized)
+def _parsed_receipt_to_row(
+    upload: dict[str, Any],
+    parsed: models.ParsedReceipt | None,
+) -> dict[str, Any]:
+    if parsed is None:
+        return {
+            "source_file_name": upload["name"],
+            "receipt_date": None,
+            "category": "etc",
+            "amount": None,
+            "task_name": "",
+        }
+
+    return {
+        "source_file_name": parsed.source_file_name,
+        "receipt_date": parsed.receipt_date.isoformat() if parsed.receipt_date else None,
+        "category": parsed.category,
+        "amount": int(parsed.amount) if parsed.amount is not None else None,
+        "task_name": parsed.task_name or "",
+    }
 
 
-def _receipt_date_key(receipt: Any) -> str:
-    receipt_date = getattr(receipt, "receipt_date", None)
-    return receipt_date.isoformat() if receipt_date else "unknown-date"
+def _coerce_receipt_date(value: Any) -> dt.date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, dt.date):
+        return value
+    if isinstance(value, str):
+        try:
+            return dt.date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
 
 
-def _receipt_date_label(date_key: str) -> str:
-    if date_key == "unknown-date":
-        return "날짜 미인식"
-    return date_key
+def _coerce_amount(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value).replace(",", "").strip())
+    except (InvalidOperation, ValueError):
+        return None
 
 
-def _build_task_name_map(
-    parsed_receipts: list[Any],
-    existing: dict[str, str] | None = None,
-) -> dict[str, str]:
-    existing = existing or {}
-    date_keys = {_receipt_date_key(parsed) for parsed in parsed_receipts}
-    return {date_key: existing.get(date_key, "") for date_key in sorted(date_keys)}
+def _rows_to_parsed_receipts(rows: list[dict[str, Any]]) -> list[models.ParsedReceipt]:
+    parsed_receipts: list[models.ParsedReceipt] = []
+    for row in rows:
+        parsed_receipts.append(
+            models.ParsedReceipt(
+                source_file_name=str(row.get("source_file_name") or ""),
+                raw_text="",
+                receipt_date=_coerce_receipt_date(row.get("receipt_date")),
+                category=str(row.get("category") or "etc"),
+                amount=_coerce_amount(row.get("amount")),
+                receipt_box=None,
+                task_name=str(row.get("task_name") or "").strip() or None,
+                notes=None,
+            )
+        )
+    return parsed_receipts
 
 
-def _missing_task_name_dates(task_name_by_date: dict[str, str]) -> list[str]:
+def _missing_task_name_files(rows: list[dict[str, Any]]) -> list[str]:
     return [
-        date_key
-        for date_key, task_name in sorted(task_name_by_date.items())
-        if not task_name.strip()
+        str(row.get("source_file_name") or "")
+        for row in rows
+        if not str(row.get("task_name") or "").strip()
     ]
+
+
+def _extract_single_receipt(upload: dict[str, Any]) -> tuple[dict[str, Any], models.ParsedReceipt]:
+    receipt = models.UploadedReceipt(
+        file_name=upload["name"],
+        image_bytes=upload["bytes"],
+        mime_type=upload.get("type") or "image/png",
+    )
+    ocr_result = get_ocr_backend().extract_text(receipt)
+    parsed = parse_receipt_text(ocr_result)
+    return {"text": ocr_result.text}, parsed
 
 
 def main() -> None:
@@ -160,22 +214,6 @@ def main() -> None:
         st.info("이름을 입력한 뒤 진행해 주세요.")
         st.stop()
 
-    st.subheader("보정 설정")
-    threshold_input = st.number_input(
-        "흑백 임계값",
-        min_value=0,
-        max_value=255,
-        value=int(st.session_state.binarization_threshold),
-        step=1,
-        help="값 이상은 흰색, 미만은 검정으로 처리합니다.",
-    )
-    threshold_value = int(threshold_input)
-    if threshold_value != st.session_state.binarization_threshold:
-        st.session_state.binarization_threshold = threshold_value
-        st.session_state.pdf_archive_bytes = None
-        st.session_state.pdf_archive_filename = None
-        st.session_state.generated_pdf_names = []
-
     st.subheader("영수증을 첨부해 주세요")
 
     uploaded_files = st.file_uploader(
@@ -192,7 +230,7 @@ def main() -> None:
         st.session_state.processed_receipts = []
         st.session_state.ocr_text_by_file = {}
         st.session_state.parsed_receipts = []
-        st.session_state.task_name_by_date = {}
+        st.session_state.rows_for_edit = []
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
@@ -206,72 +244,75 @@ def main() -> None:
     cols = st.columns(3)
     for i, u in enumerate(st.session_state.uploads):
         with cols[i % 3]:
-            st.image(
-                _render_preview_image(
-                    u["bytes"],
-                    threshold=st.session_state.binarization_threshold,
-                ),
-                caption=u["name"],
-                use_container_width=True,
-            )
+            st.image(u["bytes"], caption=u["name"], use_container_width=True)
 
     st.subheader("추출")
     process_clicked = st.button("추출하기", type="primary")
     if process_clicked:
         st.session_state.last_error = None
-        successful_receipts: list[Any] = []
         all_receipts: list[Any] = []
+        rows_for_edit: list[dict[str, Any]] = []
         ocr_text_by_file: dict[str, str] = {}
         ocr_hint: str | None = None
 
         progress = st.progress(0)
         with st.spinner("영수증을 인식하고 항목을 추출하는 중..."):
-            try:
-                ocr_backend = get_ocr_backend(
-                    threshold=st.session_state.binarization_threshold
-                )
-            except Exception as e:
-                st.session_state.last_error = (
-                    f"OCR 백엔드를 초기화하지 못했습니다: {type(e).__name__}: {e}"
-                )
-                st.error(st.session_state.last_error)
-                hint = _ocr_init_hint(e)
-                if hint:
-                    st.warning(hint)
-                st.stop()
-
             total = len(st.session_state.uploads)
-            for idx, u in enumerate(st.session_state.uploads, start=1):
-                try:
-                    receipt = models.UploadedReceipt(
-                        file_name=u["name"],
-                        image_bytes=u["bytes"],
-                        mime_type=u.get("type") or "image/png",
-                    )
-                    ocr_result = ocr_backend.extract_text(receipt)
-                    ocr_text_by_file[u["name"]] = ocr_result.text
+            results_by_index: dict[int, tuple[str, models.ParsedReceipt]] = {}
+            failed_indices: list[int] = []
+            completed = 0
 
-                    parsed = parse_receipt_text(ocr_result)
-                    successful_receipts.append(receipt)
-                    all_receipts.append(parsed)
+            with ThreadPoolExecutor(max_workers=min(OCR_MAX_WORKERS, max(total, 1))) as executor:
+                future_to_index = {
+                    executor.submit(_extract_single_receipt, upload): index
+                    for index, upload in enumerate(st.session_state.uploads)
+                }
+
+                for future in as_completed(future_to_index):
+                    index = future_to_index[future]
+                    upload = st.session_state.uploads[index]
+                    try:
+                        meta, parsed = future.result()
+                        results_by_index[index] = (str(meta["text"]), parsed)
+                    except Exception as e:
+                        ocr_text_by_file[upload["name"]] = f"[ERROR] {type(e).__name__}: {e}"
+                        failed_indices.append(index)
+                        hint = _ocr_init_hint(e)
+                        if hint and ocr_hint is None:
+                            ocr_hint = hint
+                    finally:
+                        completed += 1
+                        progress.progress(completed / max(total, 1))
+
+            for index in failed_indices:
+                upload = st.session_state.uploads[index]
+                try:
+                    meta, parsed = _extract_single_receipt(upload)
+                    results_by_index[index] = (str(meta["text"]), parsed)
                 except Exception as e:
-                    ocr_text_by_file[u["name"]] = f"[ERROR] {type(e).__name__}: {e}"
+                    ocr_text_by_file[upload["name"]] = f"[ERROR] {type(e).__name__}: {e}"
                     hint = _ocr_init_hint(e)
                     if hint and ocr_hint is None:
                         ocr_hint = hint
-                finally:
-                    progress.progress(idx / max(total, 1))
+
+            for index, upload in enumerate(st.session_state.uploads):
+                result = results_by_index.get(index)
+                if result is None:
+                    rows_for_edit.append(_parsed_receipt_to_row(upload, None))
+                    continue
+
+                ocr_text, parsed = result
+                ocr_text_by_file[upload["name"]] = ocr_text
+                all_receipts.append(parsed)
+                rows_for_edit.append(_parsed_receipt_to_row(upload, parsed))
 
         if ocr_hint:
             st.warning(ocr_hint)
 
-        st.session_state.processed_receipts = successful_receipts
+        st.session_state.processed_receipts = _uploads_as_receipts(st.session_state.uploads)
         st.session_state.ocr_text_by_file = ocr_text_by_file
         st.session_state.parsed_receipts = all_receipts
-        st.session_state.task_name_by_date = _build_task_name_map(
-            all_receipts,
-            st.session_state.task_name_by_date,
-        )
+        st.session_state.rows_for_edit = rows_for_edit
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
@@ -285,33 +326,38 @@ def main() -> None:
                 st.markdown(f"**{fname}**")
                 st.text(text if isinstance(text, str) else str(text))
 
-    if not st.session_state.parsed_receipts:
-        st.info("**추출하기**를 눌러 영수증별 PDF를 생성하세요.")
+    if not st.session_state.rows_for_edit:
+        st.info("**추출하기**를 눌러 영수증별 PDF를 생성하세요. OCR 실패 건도 아래 표에 수동 입력용 행으로 남습니다.")
         st.stop()
 
-    st.subheader("과제명 입력")
-    with st.form("task_name_form", clear_on_submit=False):
-        updated_task_names: dict[str, str] = {}
-        for date_key in sorted(st.session_state.task_name_by_date):
-            updated_task_names[date_key] = st.text_input(
-                f"{_receipt_date_label(date_key)} 과제명",
-                value=st.session_state.task_name_by_date.get(date_key, ""),
-                placeholder="예: 고객 인터뷰, 디자인 시스템 정리",
-            )
-        task_names_submitted = st.form_submit_button("과제명 저장")
-
-    if task_names_submitted:
-        st.session_state.task_name_by_date = updated_task_names
-
-    missing_task_name_dates = _missing_task_name_dates(st.session_state.task_name_by_date)
-    if missing_task_name_dates:
-        labels = ", ".join(_receipt_date_label(date_key) for date_key in missing_task_name_dates)
-        st.warning(f"과제명을 모두 입력해 주세요. 누락 날짜: {labels}")
-
     st.subheader("변환 결과")
+    edited_rows = st.data_editor(
+        st.session_state.rows_for_edit,
+        use_container_width=True,
+        num_rows="fixed",
+        hide_index=True,
+        column_config={
+            "source_file_name": st.column_config.TextColumn("파일명", disabled=True),
+            "receipt_date": st.column_config.DateColumn("날짜"),
+            "category": st.column_config.SelectboxColumn(
+                "카테고리",
+                options=["meal", "taxi", "coffee", "etc"],
+                required=True,
+            ),
+            "amount": st.column_config.NumberColumn("금액", min_value=0, step=1),
+            "task_name": st.column_config.TextColumn("과제명", required=True),
+        },
+        key="rows_editor",
+    )
+    if edited_rows != st.session_state.rows_for_edit:
+        st.session_state.pdf_archive_bytes = None
+        st.session_state.pdf_archive_filename = None
+        st.session_state.generated_pdf_names = []
+    st.session_state.rows_for_edit = edited_rows
+
+    edited_parsed_receipts = _rows_to_parsed_receipts(st.session_state.rows_for_edit)
     preview_rows = []
-    for parsed in st.session_state.parsed_receipts:
-        date_key = _receipt_date_key(parsed)
+    for parsed in edited_parsed_receipts:
         preview_rows.append(
             {
                 "source_file_name": parsed.source_file_name,
@@ -320,21 +366,24 @@ def main() -> None:
                 else None,
                 "category": parsed.category,
                 "amount": str(parsed.amount) if parsed.amount is not None else None,
-                "receipt_box": list(parsed.receipt_box) if parsed.receipt_box else None,
-                "task_name": st.session_state.task_name_by_date.get(date_key, ""),
+                "task_name": parsed.task_name,
                 "person_name": st.session_state.person_name,
                 "pdf_name": build_pdf_filename(
                     parsed.source_file_name,
                     parsed,
                     person_name=st.session_state.person_name,
-                    task_name_by_date=st.session_state.task_name_by_date,
                 ),
             }
         )
     st.dataframe(preview_rows, use_container_width=True)
 
+    missing_task_name_files = _missing_task_name_files(st.session_state.rows_for_edit)
+    if missing_task_name_files:
+        labels = ", ".join(missing_task_name_files)
+        st.warning(f"과제명을 모두 입력해 주세요. 누락 파일: {labels}")
+
     st.subheader("다운로드")
-    if missing_task_name_dates:
+    if missing_task_name_files:
         st.stop()
 
     if st.session_state.pdf_archive_bytes is None:
@@ -342,10 +391,8 @@ def main() -> None:
             with st.spinner("PDF ZIP 파일을 생성하는 중..."):
                 archive_bytes, generated_names = build_pdf_archive(
                     receipts=st.session_state.processed_receipts,
-                    parsed_receipts=st.session_state.parsed_receipts,
+                    parsed_receipts=edited_parsed_receipts,
                     person_name=st.session_state.person_name,
-                    threshold=st.session_state.binarization_threshold,
-                    task_name_by_date=st.session_state.task_name_by_date,
                 )
                 st.session_state.pdf_archive_bytes = archive_bytes
                 st.session_state.generated_pdf_names = generated_names

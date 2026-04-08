@@ -4,8 +4,8 @@ from receipt_app.ocr.base import OCRBackend
 from receipt_app.ocr.gemini_backend import GeminiOCRBackend
 
 
-def get_ocr_backend(*, threshold: int = 100) -> OCRBackend:
-    return GeminiOCRBackend(threshold=threshold)
+def get_ocr_backend() -> OCRBackend:
+    return GeminiOCRBackend()
 
 
 DEFAULT_OCR_BACKEND = get_ocr_backend()

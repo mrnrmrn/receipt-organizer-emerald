@@ -7,25 +7,16 @@ import re
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from receipt_app.models import ParsedReceipt, UploadedReceipt
-from receipt_app.utils.images import (
-    binarize_receipt_image,
-    image_to_pdf_bytes,
-    normalize_receipt_image,
-    open_image_from_bytes,
-    prepare_image_for_pdf,
-)
+from receipt_app.utils.images import image_bytes_to_pdf_bytes
 
 
 def build_pdf_archive(
     receipts: list[UploadedReceipt],
     parsed_receipts: list[ParsedReceipt],
     person_name: str,
-    threshold: int = 100,
-    task_name_by_date: dict[str, str] | None = None,
 ) -> tuple[bytes, list[str]]:
     filenames: list[str] = []
     output = BytesIO()
-    task_name_by_date = task_name_by_date or {}
 
     with ZipFile(output, mode="w", compression=ZIP_DEFLATED) as archive:
         for receipt, parsed in zip(receipts, parsed_receipts):
@@ -33,13 +24,8 @@ def build_pdf_archive(
                 receipt.file_name,
                 parsed,
                 person_name=person_name,
-                task_name_by_date=task_name_by_date,
             )
-            pdf_bytes = _receipt_to_pdf_bytes(
-                receipt,
-                parsed_receipt=parsed,
-                threshold=threshold,
-            )
+            pdf_bytes = _receipt_to_pdf_bytes(receipt)
             archive.writestr(filename, pdf_bytes)
             filenames.append(filename)
 
@@ -50,11 +36,8 @@ def build_pdf_filename(
     source_file_name: str,
     parsed_receipt: ParsedReceipt,
     person_name: str,
-    task_name_by_date: dict[str, str] | None = None,
 ) -> str:
-    task_name_by_date = task_name_by_date or {}
-    date_key = parsed_receipt.receipt_date.isoformat() if parsed_receipt.receipt_date else "unknown-date"
-    task_name = _sanitize_filename_component(task_name_by_date.get(date_key, ""))
+    task_name = _sanitize_filename_component(parsed_receipt.task_name or "")
     if not task_name:
         task_name = "untitled-task"
     date_text = _format_date(parsed_receipt.receipt_date)
@@ -64,16 +47,8 @@ def build_pdf_filename(
     return f"{task_name}_{date_text}_{person_name_text}_{category_text}_{amount_text}.pdf"
 
 
-def _receipt_to_pdf_bytes(
-    receipt: UploadedReceipt,
-    parsed_receipt: ParsedReceipt,
-    threshold: int,
-) -> bytes:
-    image = open_image_from_bytes(receipt.image_bytes)
-    normalized = normalize_receipt_image(image)
-    binarized = binarize_receipt_image(normalized, threshold=threshold)
-    prepared = prepare_image_for_pdf(binarized)
-    return image_to_pdf_bytes(prepared)
+def _receipt_to_pdf_bytes(receipt: UploadedReceipt) -> bytes:
+    return image_bytes_to_pdf_bytes(receipt.image_bytes)
 
 
 def _format_date(value: date | None) -> str:

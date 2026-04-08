@@ -39,4 +39,5 @@ class ParsedReceipt:
     category: ReceiptCategory = "etc"
     amount: Decimal | None = None
     receipt_box: ReceiptBox | None = None
+    task_name: str | None = None
     notes: str | None = None

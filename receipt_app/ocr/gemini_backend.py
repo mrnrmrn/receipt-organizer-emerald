@@ -11,13 +11,6 @@ import streamlit as st
 
 from receipt_app.config import DEFAULT_CONFIG
 from receipt_app.models import OCRResult, ReceiptBox, ReceiptCategory, UploadedReceipt
-from receipt_app.utils.images import (
-    binarize_receipt_image,
-    image_to_png_bytes,
-    normalize_receipt_image,
-    open_image_from_bytes,
-)
-
 DEFAULT_GEMINI_PROMPT = (
     "Analyze the receipt image and return a JSON object. "
     "Extract the receipt date when visible. "
@@ -205,7 +198,6 @@ class GeminiOCRBackend:
     prompt: str = DEFAULT_GEMINI_PROMPT
     backend_name: str = "gemini"
     language: str = "ko,en"
-    threshold: int = 100
 
     def extract_text(self, receipt: UploadedReceipt) -> OCRResult:
         from google import genai  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
@@ -229,11 +221,6 @@ class GeminiOCRBackend:
         )
         model = model or getattr(DEFAULT_CONFIG, "gemini_model", "gemini-2.5-flash")
 
-        image = open_image_from_bytes(receipt.image_bytes)
-        normalized = normalize_receipt_image(image)
-        binarized = binarize_receipt_image(normalized, threshold=self.threshold)
-        png_bytes = image_to_png_bytes(binarized)
-
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model=model,
@@ -242,7 +229,10 @@ class GeminiOCRBackend:
                     role="user",
                     parts=[
                         types.Part.from_text(text=self.prompt),
-                        types.Part.from_bytes(data=png_bytes, mime_type="image/png"),
+                        types.Part.from_bytes(
+                            data=receipt.image_bytes,
+                            mime_type=receipt.mime_type,
+                        ),
                     ],
                 )
             ],
