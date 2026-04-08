@@ -38,6 +38,7 @@ def _init_state() -> None:
     ss.setdefault("ocr_text_by_file", {})
     ss.setdefault("parsed_receipts", [])
     ss.setdefault("rows_for_edit", [])
+    ss.setdefault("task_name_by_date", {})
     ss.setdefault("pdf_archive_bytes", None)
     ss.setdefault("pdf_archive_filename", None)
     ss.setdefault("generated_pdf_names", [])
@@ -139,6 +140,17 @@ def _coerce_receipt_date(value: Any) -> dt.date | None:
     return None
 
 
+def _task_name_date_key(value: Any) -> str:
+    receipt_date = _coerce_receipt_date(value)
+    return receipt_date.isoformat() if receipt_date else "unknown-date"
+
+
+def _task_name_date_label(date_key: str) -> str:
+    if date_key == "unknown-date":
+        return "날짜 미인식"
+    return date_key
+
+
 def _coerce_amount(value: Any) -> Decimal | None:
     if value in (None, ""):
         return None
@@ -172,6 +184,28 @@ def _missing_task_name_files(rows: list[dict[str, Any]]) -> list[str]:
         for row in rows
         if not str(row.get("task_name") or "").strip()
     ]
+
+
+def _build_task_name_map_from_rows(
+    rows: list[dict[str, Any]],
+    existing: dict[str, str] | None = None,
+) -> dict[str, str]:
+    existing = existing or {}
+    date_keys = {_task_name_date_key(row.get("receipt_date")) for row in rows}
+    return {date_key: existing.get(date_key, "") for date_key in sorted(date_keys)}
+
+
+def _apply_task_names_to_rows(
+    rows: list[dict[str, Any]],
+    task_name_by_date: dict[str, str],
+) -> list[dict[str, Any]]:
+    updated_rows: list[dict[str, Any]] = []
+    for row in rows:
+        next_row = dict(row)
+        date_key = _task_name_date_key(row.get("receipt_date"))
+        next_row["task_name"] = task_name_by_date.get(date_key, "")
+        updated_rows.append(next_row)
+    return updated_rows
 
 
 def _extract_single_receipt(upload: dict[str, Any]) -> tuple[dict[str, Any], models.ParsedReceipt]:
@@ -229,6 +263,7 @@ def main() -> None:
         st.session_state.ocr_text_by_file = {}
         st.session_state.parsed_receipts = []
         st.session_state.rows_for_edit = []
+        st.session_state.task_name_by_date = {}
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
@@ -301,6 +336,7 @@ def main() -> None:
         st.session_state.ocr_text_by_file = ocr_text_by_file
         st.session_state.parsed_receipts = all_receipts
         st.session_state.rows_for_edit = rows_for_edit
+        st.session_state.task_name_by_date = _build_task_name_map_from_rows(rows_for_edit)
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
@@ -318,6 +354,31 @@ def main() -> None:
         st.info("**추출하기**를 눌러 영수증별 PDF를 생성하세요. OCR 실패 건도 아래 표에 수동 입력용 행으로 남습니다.")
         st.stop()
 
+    st.subheader("과제명 입력")
+    st.session_state.task_name_by_date = _build_task_name_map_from_rows(
+        st.session_state.rows_for_edit,
+        st.session_state.task_name_by_date,
+    )
+    with st.form("task_name_form", clear_on_submit=False):
+        updated_task_names: dict[str, str] = {}
+        for date_key in sorted(st.session_state.task_name_by_date):
+            updated_task_names[date_key] = st.text_input(
+                f"{_task_name_date_label(date_key)} 과제명",
+                value=st.session_state.task_name_by_date.get(date_key, ""),
+                placeholder="예: 고객 인터뷰, 디자인 시스템 정리",
+            )
+        task_names_submitted = st.form_submit_button("과제명 저장")
+
+    if task_names_submitted:
+        st.session_state.task_name_by_date = updated_task_names
+        st.session_state.rows_for_edit = _apply_task_names_to_rows(
+            st.session_state.rows_for_edit,
+            updated_task_names,
+        )
+        st.session_state.pdf_archive_bytes = None
+        st.session_state.pdf_archive_filename = None
+        st.session_state.generated_pdf_names = []
+
     st.subheader("변환 결과")
     edited_rows = st.data_editor(
         st.session_state.rows_for_edit,
@@ -333,11 +394,15 @@ def main() -> None:
                 required=True,
             ),
             "amount": st.column_config.NumberColumn("금액", min_value=0, step=1),
-            "task_name": st.column_config.TextColumn("과제명", required=True),
+            "task_name": st.column_config.TextColumn("과제명", required=True, disabled=True),
         },
         key="rows_editor",
     )
     if edited_rows != st.session_state.rows_for_edit:
+        previous_task_names = dict(st.session_state.task_name_by_date)
+        next_task_name_map = _build_task_name_map_from_rows(edited_rows, previous_task_names)
+        edited_rows = _apply_task_names_to_rows(edited_rows, next_task_name_map)
+        st.session_state.task_name_by_date = next_task_name_map
         st.session_state.pdf_archive_bytes = None
         st.session_state.pdf_archive_filename = None
         st.session_state.generated_pdf_names = []
