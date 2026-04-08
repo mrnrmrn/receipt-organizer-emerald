@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime as dt
 import hashlib
 from decimal import Decimal, InvalidOperation
@@ -24,7 +23,6 @@ except Exception as e:
 
 
 APP_TITLE_KO = "에메랄드 영수증"
-OCR_MAX_WORKERS = 4
 
 
 def _sha256(data: bytes) -> str:
@@ -260,29 +258,19 @@ def main() -> None:
             total = len(st.session_state.uploads)
             results_by_index: dict[int, tuple[str, models.ParsedReceipt]] = {}
             failed_indices: list[int] = []
-            completed = 0
 
-            with ThreadPoolExecutor(max_workers=min(OCR_MAX_WORKERS, max(total, 1))) as executor:
-                future_to_index = {
-                    executor.submit(_extract_single_receipt, upload): index
-                    for index, upload in enumerate(st.session_state.uploads)
-                }
-
-                for future in as_completed(future_to_index):
-                    index = future_to_index[future]
-                    upload = st.session_state.uploads[index]
-                    try:
-                        meta, parsed = future.result()
-                        results_by_index[index] = (str(meta["text"]), parsed)
-                    except Exception as e:
-                        ocr_text_by_file[upload["name"]] = f"[ERROR] {type(e).__name__}: {e}"
-                        failed_indices.append(index)
-                        hint = _ocr_init_hint(e)
-                        if hint and ocr_hint is None:
-                            ocr_hint = hint
-                    finally:
-                        completed += 1
-                        progress.progress(completed / max(total, 1))
+            for index, upload in enumerate(st.session_state.uploads):
+                try:
+                    meta, parsed = _extract_single_receipt(upload)
+                    results_by_index[index] = (str(meta["text"]), parsed)
+                except Exception as e:
+                    ocr_text_by_file[upload["name"]] = f"[ERROR] {type(e).__name__}: {e}"
+                    failed_indices.append(index)
+                    hint = _ocr_init_hint(e)
+                    if hint and ocr_hint is None:
+                        ocr_hint = hint
+                finally:
+                    progress.progress((index + 1) / max(total, 1))
 
             for index in failed_indices:
                 upload = st.session_state.uploads[index]
