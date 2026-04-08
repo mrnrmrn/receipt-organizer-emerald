@@ -205,7 +205,7 @@ class GeminiOCRBackend:
     prompt: str = DEFAULT_GEMINI_PROMPT
     backend_name: str = "gemini"
     language: str = "ko,en"
-    threshold: int = 70
+    threshold: int = 100
 
     def extract_text(self, receipt: UploadedReceipt) -> OCRResult:
         from google import genai  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]

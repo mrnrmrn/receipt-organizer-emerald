@@ -20,7 +20,7 @@ def build_pdf_archive(
     receipts: list[UploadedReceipt],
     parsed_receipts: list[ParsedReceipt],
     person_name: str,
-    threshold: int = 70,
+    threshold: int = 100,
     task_name_by_date: dict[str, str] | None = None,
 ) -> tuple[bytes, list[str]]:
     filenames: list[str] = []

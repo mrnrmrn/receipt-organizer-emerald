@@ -19,7 +19,7 @@ def normalize_receipt_image(image: Image.Image) -> Image.Image:
     return autocontrasted
 
 
-def binarize_receipt_image(image: Image.Image, threshold: int = 70) -> Image.Image:
+def binarize_receipt_image(image: Image.Image, threshold: int = 100) -> Image.Image:
     clamped_threshold = max(0, min(int(threshold), 255))
     return image.point(lambda px: 255 if px >= clamped_threshold else 0, mode="L")
 

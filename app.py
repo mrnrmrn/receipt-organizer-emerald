@@ -10,6 +10,12 @@ try:
     from receipt_app.export import build_pdf_archive, build_pdf_filename
     from receipt_app.ocr import get_ocr_backend
     from receipt_app.parse.receipt_parser import parse_receipt_text
+    from receipt_app.utils.images import (
+        binarize_receipt_image,
+        image_to_png_bytes,
+        normalize_receipt_image,
+        open_image_from_bytes,
+    )
 except Exception as e:
     st.error(
         "백엔드 패키지를 불러오지 못했습니다.\n\n"
@@ -30,7 +36,7 @@ def _sha256(data: bytes) -> str:
 def _init_state() -> None:
     ss = st.session_state
     ss.setdefault("person_name", "")
-    ss.setdefault("binarization_threshold", 70)
+    ss.setdefault("binarization_threshold", 100)
     ss.setdefault("uploads", [])
     ss.setdefault("uploads_fingerprint", "")
     ss.setdefault("processed_receipts", [])
@@ -90,6 +96,13 @@ def _archive_basename(uploads: list[dict[str, Any]]) -> str:
 
 def _sanitize_person_name(value: str) -> str:
     return " ".join(value.split()).strip()
+
+
+def _render_preview_image(image_bytes: bytes, threshold: int) -> bytes:
+    image = open_image_from_bytes(image_bytes)
+    normalized = normalize_receipt_image(image)
+    binarized = binarize_receipt_image(normalized, threshold=threshold)
+    return image_to_png_bytes(binarized)
 
 
 def _receipt_date_key(receipt: Any) -> str:
@@ -193,7 +206,14 @@ def main() -> None:
     cols = st.columns(3)
     for i, u in enumerate(st.session_state.uploads):
         with cols[i % 3]:
-            st.image(u["bytes"], caption=u["name"], use_container_width=True)
+            st.image(
+                _render_preview_image(
+                    u["bytes"],
+                    threshold=st.session_state.binarization_threshold,
+                ),
+                caption=u["name"],
+                use_container_width=True,
+            )
 
     st.subheader("추출")
     process_clicked = st.button("추출하기", type="primary")
