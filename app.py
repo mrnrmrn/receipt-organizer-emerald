@@ -119,7 +119,7 @@ def _parsed_receipt_to_row(
 
     return {
         "source_file_name": parsed.source_file_name,
-        "receipt_date": parsed.receipt_date.isoformat() if parsed.receipt_date else None,
+        "receipt_date": parsed.receipt_date,
         "category": parsed.category,
         "amount": int(parsed.amount) if parsed.amount is not None else None,
         "task_name": parsed.task_name or "",
