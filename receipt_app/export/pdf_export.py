@@ -64,7 +64,6 @@ def _format_amount(value: Decimal | None) -> str:
 
 
 def _sanitize_filename_component(value: str) -> str:
-    collapsed = re.sub(r"\s+", "_", value.strip())
+    collapsed = re.sub(r"\s+", " ", value.strip())
     sanitized = re.sub(r'[\\/:*?"<>|]+', "-", collapsed)
-    sanitized = re.sub(r"_+", "_", sanitized)
-    return sanitized.strip("._-") or "receipt"
+    return sanitized.strip(" ._-") or "receipt"

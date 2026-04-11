@@ -12,6 +12,10 @@ try:
     from receipt_app.export import build_pdf_archive, build_pdf_filename
     from receipt_app.ocr import get_ocr_backend
     from receipt_app.parse.receipt_parser import parse_receipt_text
+    from receipt_app.utils.images import (
+        convert_image_bytes_to_jpeg,
+        replace_file_extension_with_jpg,
+    )
 except Exception as e:
     st.error(
         "백엔드 패키지를 불러오지 못했습니다.\n\n"
@@ -50,11 +54,12 @@ def _uploads_from_uploader(uploaded_files: list[Any] | None) -> list[dict[str, A
         return []
     uploads: list[dict[str, Any]] = []
     for f in uploaded_files:
-        data = f.getvalue() if hasattr(f, "getvalue") else f.read()
+        raw_data = f.getvalue() if hasattr(f, "getvalue") else f.read()
+        data = convert_image_bytes_to_jpeg(raw_data)
         uploads.append(
             {
-                "name": getattr(f, "name", "receipt"),
-                "type": getattr(f, "type", ""),
+                "name": replace_file_extension_with_jpg(getattr(f, "name", "receipt")),
+                "type": "image/jpeg",
                 "bytes": data,
                 "sha": _sha256(data),
             }
@@ -186,6 +191,14 @@ def _missing_task_name_files(rows: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _count_failed_ocr_results(ocr_text_by_file: dict[str, str]) -> int:
+    return sum(
+        1
+        for text in ocr_text_by_file.values()
+        if isinstance(text, str) and text.startswith("[ERROR]")
+    )
+
+
 def _build_task_name_map_from_rows(
     rows: list[dict[str, Any]],
     existing: dict[str, str] | None = None,
@@ -273,6 +286,7 @@ def main() -> None:
         st.info("영수증 이미지를 1장 이상 업로드해 주세요.")
         st.stop()
 
+    st.caption(f"총 {len(st.session_state.uploads)}개 업로드됨")
     st.caption("미리보기")
     cols = st.columns(3)
     for i, u in enumerate(st.session_state.uploads):
@@ -345,6 +359,12 @@ def main() -> None:
         st.error(st.session_state.last_error)
 
     if st.session_state.ocr_text_by_file:
+        total_ocr = len(st.session_state.ocr_text_by_file)
+        failed_ocr = _count_failed_ocr_results(st.session_state.ocr_text_by_file)
+        success_ocr = total_ocr - failed_ocr
+        st.caption(
+            f"추출 결과: 총 {total_ocr}개 · 성공 {success_ocr}개 · 실패 {failed_ocr}개"
+        )
         with st.expander("OCR 원문 (영수증별)", expanded=False):
             for fname, text in st.session_state.ocr_text_by_file.items():
                 st.markdown(f"**{fname}**")
@@ -359,6 +379,7 @@ def main() -> None:
         st.session_state.rows_for_edit,
         st.session_state.task_name_by_date,
     )
+    st.caption(f"과제명 입력 대상 날짜 총 {len(st.session_state.task_name_by_date)}개")
     with st.form("task_name_form", clear_on_submit=False):
         updated_task_names: dict[str, str] = {}
         for date_key in sorted(st.session_state.task_name_by_date):
@@ -380,6 +401,7 @@ def main() -> None:
         st.session_state.generated_pdf_names = []
 
     st.subheader("변환 결과")
+    st.caption(f"편집 대상 총 {len(st.session_state.rows_for_edit)}개")
     edited_rows = st.data_editor(
         st.session_state.rows_for_edit,
         use_container_width=True,
@@ -436,6 +458,7 @@ def main() -> None:
         st.warning(f"과제명을 모두 입력해 주세요. 누락 파일: {labels}")
 
     st.subheader("다운로드")
+    st.caption(f"다운로드 대상 총 {len(edited_parsed_receipts)}개")
     if missing_task_name_files:
         st.stop()
 
